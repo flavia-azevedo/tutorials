@@ -42,18 +42,66 @@ class RAGEvaluator:
         fluency_score = len(summary_text) / len(generated_response)  # Lower ratio = more concise
         return fluency_score
 
+    def evaluate_retrieved_chunks(self, query, retrieved_chunks):
+        """Evaluate the quality of retrieved chunks in terms of relevance, diversity, and density."""
+        
+        # Step 1: Relevance of chunks to query
+        relevance_scores = [
+            util.pytorch_cos_sim(self.model.encode(query, convert_to_tensor=True), 
+                                 self.model.encode(chunk, convert_to_tensor=True)).item()
+            for chunk in retrieved_chunks
+        ]
+        avg_relevance = np.mean(relevance_scores)
+
+        # Step 2: Redundancy Check (Diversity) - Measure similarity between chunks
+        chunk_embeddings = self.model.encode(retrieved_chunks, convert_to_tensor=True)
+        similarity_matrix = util.pytorch_cos_sim(chunk_embeddings, chunk_embeddings).numpy()
+        redundancy_score = np.mean(similarity_matrix)  # Higher = more redundancy
+
+        # Step 3: Information Density - Use GPT to assess chunk quality
+        chunk_text = "\n".join(retrieved_chunks)
+        prompt = f"""
+        You are assessing retrieved text chunks for a Retrieval-Augmented Generation (RAG) system.
+        - User Query: {query}
+        - Retrieved Chunks: {chunk_text}
+
+        Evaluate:
+        1. Are these chunks **relevant** to the query? (0-1)
+        2. Are they **redundant**, repeating the same information? (0-1, higher = more redundant)
+        3. Do they contain **concise and useful** information? (0-1)
+
+        Provide a brief quality assessment.
+        """
+
+        response = self.client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "system", "content": "You are an expert in evaluating information retrieval quality."},
+                      {"role": "user", "content": prompt}],
+            temperature=0.5,
+            max_tokens=256
+        )
+        llm_judgment = response.choices[0].message.content
+
+        return {
+            "Chunk Relevance Score": round(avg_relevance, 3),
+            "Redundancy Score": round(redundancy_score, 3),
+            "LLM Judgment": llm_judgment
+        }
+
     def evaluate(self, query, retrieved_chunks, generated_response):
         """Evaluate the RAG pipeline using multiple metrics."""
         relevance_score = self.evaluate_relevance(query, retrieved_chunks)
         faithfulness_score = self.evaluate_faithfulness(generated_response, retrieved_chunks)
         completeness_score = self.evaluate_completeness(query, generated_response)
         fluency_score = self.evaluate_fluency(generated_response)
+        retrieved_chunk_quality = self.evaluate_retrieved_chunks(query, retrieved_chunks)
 
         return {
             "Relevance Score": round(relevance_score, 3),
             "Faithfulness Score": round(faithfulness_score, 3),
             "Completeness Score": round(completeness_score, 3),
             "Fluency Score": round(fluency_score, 3),
+            "Retrieved Chunks Quality": retrieved_chunk_quality
         }
 
     def final_evaluator(self, query, retrieved_chunks, generated_response):
@@ -73,15 +121,16 @@ class RAGEvaluator:
           - Faithfulness Score: {scores["Faithfulness Score"]}
           - Completeness Score: {scores["Completeness Score"]}
           - Fluency Score: {scores["Fluency Score"]}
+          - Retrieved Chunks Quality: {scores["Retrieved Chunks Quality"]}
 
         Provide a final judgment:
-        1. Is the generated response **accurate and reliable**?
-        2. Are there any **hallucinations** or missing information?
-        3. How can the retrieval or generation be improved?
-        4. Assign an **overall rating (0-10)** and explain why.
+        1. Are the retrieved chunks **useful, diverse, and relevant**?
+        2. Is the generated response **accurate and reliable**?
+        3. Are there any **hallucinations** or missing information?
+        4. How can the retrieval or generation be improved?
+        5. Assign an **overall rating (0-10)** and explain why.
         """
 
-        # Call OpenAI API
         response = self.client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "system", "content": "You are an AI evaluator of RAG-based systems."},
@@ -96,7 +145,7 @@ class RAGEvaluator:
 
 # Example Usage
 if __name__ == "__main__":
-    OPENAI_API_KEY = "your-api-key-here"  # Ensure you have your OpenAI key
+    OPENAI_API_KEY = "your-api-key-here"
 
     evaluator = RAGEvaluator(OPENAI_API_KEY)
     query = "What was the net income for 2023?"
@@ -107,5 +156,6 @@ if __name__ == "__main__":
 
     print("Evaluation Scores:", evaluation_scores)
     print("Final LLM Judgment:", final_llm_judgment)
+
 
 
