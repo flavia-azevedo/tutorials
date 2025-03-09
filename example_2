@@ -1,0 +1,63 @@
+from sentence_transformers import SentenceTransformer, util
+from transformers import pipeline
+import numpy as np
+
+class RAGEvaluator:
+    def __init__(self):
+        self.model = SentenceTransformer('all-MiniLM-L6-v2')  # For text similarity
+        self.summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+
+    def evaluate_relevance(self, query, retrieved_chunks):
+        """Check if retrieved chunks are relevant to the query."""
+        query_embedding = self.model.encode(query, convert_to_tensor=True)
+        chunk_embeddings = self.model.encode(retrieved_chunks, convert_to_tensor=True)
+        scores = util.pytorch_cos_sim(query_embedding, chunk_embeddings)[0].tolist()
+        avg_score = np.mean(scores)  # Higher = more relevant
+        return avg_score
+
+    def evaluate_faithfulness(self, generated_response, retrieved_chunks):
+        """Check if generated response is grounded in retrieved chunks."""
+        chunk_text = " ".join(retrieved_chunks)
+        gen_embedding = self.model.encode(generated_response, convert_to_tensor=True)
+        chunk_embedding = self.model.encode(chunk_text, convert_to_tensor=True)
+        score = util.pytorch_cos_sim(gen_embedding, chunk_embedding).item()  # High score = faithful
+        return score
+
+    def evaluate_completeness(self, query, generated_response):
+        """Check if key entities from query appear in response."""
+        query_tokens = set(query.lower().split())
+        response_tokens = set(generated_response.lower().split())
+        common_tokens = query_tokens.intersection(response_tokens)
+        completeness_score = len(common_tokens) / len(query_tokens)
+        return completeness_score
+
+    def evaluate_fluency(self, generated_response):
+        """Check if response is clear and concise using a summarizer."""
+        summary = self.summarizer(generated_response, max_length=50, min_length=20, do_sample=False)
+        summary_text = summary[0]['summary_text']
+        fluency_score = len(summary_text) / len(generated_response)  # Lower ratio = more concise
+        return fluency_score
+
+    def evaluate(self, query, retrieved_chunks, generated_response):
+        """Evaluate the RAG pipeline using multiple metrics."""
+        relevance_score = self.evaluate_relevance(query, retrieved_chunks)
+        faithfulness_score = self.evaluate_faithfulness(generated_response, retrieved_chunks)
+        completeness_score = self.evaluate_completeness(query, generated_response)
+        fluency_score = self.evaluate_fluency(generated_response)
+
+        return {
+            "Relevance Score": round(relevance_score, 3),
+            "Faithfulness Score": round(faithfulness_score, 3),
+            "Completeness Score": round(completeness_score, 3),
+            "Fluency Score": round(fluency_score, 3),
+        }
+
+# Example Usage
+if __name__ == "__main__":
+    evaluator = RAGEvaluator()
+    query = "What was the net income for 2023?"
+    retrieved_chunks = ["The company's net income for 2023 was $1.2 billion.", "Revenue increased by 5%."]  
+    generated_response = "The net income for 2023 was $1.2 billion."
+
+    scores = evaluator.evaluate(query, retrieved_chunks, generated_response)
+    print(scores)
