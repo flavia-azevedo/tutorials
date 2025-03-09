@@ -1,11 +1,15 @@
 from sentence_transformers import SentenceTransformer, util
-from transformers import pipeline
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
 import numpy as np
+import torch
 
 class RAGEvaluator:
     def __init__(self):
         self.model = SentenceTransformer('all-MiniLM-L6-v2')  # For text similarity
         self.summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+        self.llm_model = "meta-llama/Llama-2-7b-chat-hf"  # Change as needed
+        self.tokenizer = AutoTokenizer.from_pretrained(self.llm_model)
+        self.llm = AutoModelForCausalLM.from_pretrained(self.llm_model, device_map="auto", torch_dtype=torch.float16)
 
     def evaluate_relevance(self, query, retrieved_chunks):
         """Check if retrieved chunks are relevant to the query."""
@@ -52,12 +56,47 @@ class RAGEvaluator:
             "Fluency Score": round(fluency_score, 3),
         }
 
+    def final_evaluator(self, query, retrieved_chunks, generated_response):
+        """Pass all evaluation scores and context to an LLM for final judgment."""
+        scores = self.evaluate(query, retrieved_chunks, generated_response)
+        
+        prompt = f"""
+        You are an AI evaluator assessing the quality of a Retrieval-Augmented Generation (RAG) system.
+        Here are the details:
+
+        - **User Query:** {query}
+        - **Retrieved Chunks:** {retrieved_chunks}
+        - **Generated Response:** {generated_response}
+
+        - **Evaluation Scores:**
+          - Relevance Score: {scores["Relevance Score"]}
+          - Faithfulness Score: {scores["Faithfulness Score"]}
+          - Completeness Score: {scores["Completeness Score"]}
+          - Fluency Score: {scores["Fluency Score"]}
+
+        Provide a final judgment:
+        1. Is the generated response **accurate and reliable**?
+        2. Are there any **hallucinations** or missing information?
+        3. How can the retrieval or generation be improved?
+        4. Assign an **overall rating (0-10)** and explain why.
+        """
+        
+        input_ids = self.tokenizer(prompt, return_tensors="pt", truncation=True).input_ids.to("cuda")
+        output = self.llm.generate(input_ids, max_length=512, temperature=0.5)
+        final_judgment = self.tokenizer.decode(output[0], skip_special_tokens=True)
+
+        return {
+            "Evaluation Scores": scores,
+            "Final LLM Judgment": final_judgment
+        }
+
 # Example Usage
 if __name__ == "__main__":
     evaluator = RAGEvaluator()
     query = "What was the net income for 2023?"
-    retrieved_chunks = ["The company's net income for 2023 was $1.2 billion.", "Revenue increased by 5%."]  
+    retrieved_chunks = ["The company's net income for 2023 was $1.2 billion.", "Revenue increased by 5%."]
     generated_response = "The net income for 2023 was $1.2 billion."
 
-    scores = evaluator.evaluate(query, retrieved_chunks, generated_response)
-    print(scores)
+    result = evaluator.final_evaluator(query, retrieved_chunks, generated_response)
+    print(result)
+
