@@ -1,0 +1,16 @@
+Quick start (env vars)
+
+export AWS_REGION=us-east-1
+export AGENTCORE_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/my-runtime
+
+# Bedrock collaborators (inside the runtime)
+export RESEARCHER_AGENT_ID=agnt-xxxxxxxx
+export RESEARCHER_AGENT_ALIAS=alias-xxxxxxxx
+export WRITER_AGENT_ID=agnt-yyyyyyyy
+export WRITER_AGENT_ALIAS=alias-yyyyyyyy
+
+# Manager model id (Bedrock)
+export MANAGER_MODEL_ID=anthropic.claude-3-5-sonnet-20240620-v1:0
+
+# Optional user prompt
+export PROMPT="Write a short, sourced brief on LLM safety milestones in 2025."
